@@ -27,39 +27,6 @@ def load_data() -> pd.DataFrame:
     return pd.read_csv(DATA_PATH)
 
 
-def pagu_bucket_options() -> list[str]:
-    return [
-        "Semua",
-        "< 10 miliar",
-        "10 - 50 miliar",
-        "50 - 100 miliar",
-        "> 100 miliar",
-    ]
-
-
-def filter_data(
-    data: pd.DataFrame,
-    provinsi: str,
-    pagu_bucket: str,
-    jenis_belanja: str,
-) -> pd.DataFrame:
-    filtered = data.copy()
-    if provinsi != "Semua":
-        filtered = filtered[filtered["provinsi"] == provinsi]
-    if jenis_belanja != "Semua":
-        filtered = filtered[filtered["jenis_belanja_utama"] == jenis_belanja]
-    if pagu_bucket != "Semua":
-        if pagu_bucket == "< 10 miliar":
-            filtered = filtered[filtered["pagu_miliar"] < 10]
-        elif pagu_bucket == "10 - 50 miliar":
-            filtered = filtered[(filtered["pagu_miliar"] >= 10) & (filtered["pagu_miliar"] <= 50)]
-        elif pagu_bucket == "50 - 100 miliar":
-            filtered = filtered[(filtered["pagu_miliar"] > 50) & (filtered["pagu_miliar"] <= 100)]
-        else:
-            filtered = filtered[filtered["pagu_miliar"] > 100]
-    return filtered
-
-
 @st.cache_resource
 def load_model():
     return joblib.load(MODEL_PATH)
@@ -92,49 +59,29 @@ def predict(model, features: np.ndarray) -> tuple[str, float, float]:
 def main():
     st.title("📊 Dashboard Prediksi Realisasi 95%")
     st.write(
-        "Gunakan model terbaik untuk memprediksi apakah realisasi akan mencapai 95% dengan input anggaran dan karakteristik satker."
+        "Gunakan tab di bawah untuk melihat overview data, memfilter grafik batang, atau menjalankan prediksi model."
     )
 
     with st.sidebar:
-        st.header("Input Prediksi")
-        tipe_satker = st.selectbox("Tipe Satker", TIPE_SATKER_OPTIONS)
-        jumlah_spm = st.number_input(
-            "Jumlah SPM",
-            min_value=0.0,
-            max_value=1000.0,
-            value=50.0,
-            step=1.0,
-        )
-        revisi_dipa = st.number_input(
-            "Revisi DIPA",
-            min_value=0.0,
-            max_value=20.0,
-            value=1.0,
-            step=1.0,
-        )
-        deviasi_rpd_persen = st.number_input(
-            "Deviasi RPD (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=10.0,
-            step=0.1,
-        )
-        skor_ikpa = st.number_input(
-            "Skor IKPA",
-            min_value=0.0,
-            max_value=100.0,
-            value=80.0,
-            step=0.1,
+        st.header("Panduan")
+        st.write(
+            "Pilih tab untuk menavigasi: Overview Data, Grafik Monitoring, Prediksi Model."
         )
         st.markdown("---")
-        st.caption("Model memanfaatkan fitur numerik dan encoding tipe satker.")
+        st.caption("Data: provinsi, pagu, jenis belanja, realisasi, dan IKPA.")
 
     data = load_data()
     model = load_model()
 
-    with st.expander("Ringkasan Data", expanded=True):
-        st.write("Dataset contoh prediksi dan statistik dasar dari data yang tersedia.")
-        st.dataframe(data.head(10), use_container_width=True)
+    tab_overview, tab_grafik, tab_prediksi = st.tabs(
+        ["Overview Data", "Grafik Monitoring", "Prediksi Model"]
+    )
+
+    with tab_overview:
+        st.header("Overview Data Semua Provinsi")
+        st.write(
+            "Tampilan ringkas distribusi seluruh data per provinsi, realisasi, dan jenis belanja utama."
+        )
         col1, col2 = st.columns(2)
         with col1:
             st.metric("Jumlah Baris", len(data))
@@ -142,84 +89,162 @@ def main():
                 "Persentase Ya",
                 f"{(data['realisasi_tercapai_95persen'] == 'Ya').mean() * 100:.1f}%",
             )
+            st.metric("Jumlah Provinsi", len(data["provinsi"].dropna().unique()))
         with col2:
-            st.bar_chart(
-                data['realisasi_tercapai_95persen'].value_counts().rename_axis('Label').reset_index(name='Count'),
-                x='Label',
-                y='Count',
+            st.dataframe(data.head(10), use_container_width=True)
+        st.markdown("### Distribusi Realisasi 95% per Provinsi")
+        overview_chart = (
+            alt.Chart(
+                data.groupby(["provinsi", "realisasi_tercapai_95persen"]).size().reset_index(name="count")
             )
-
-    st.markdown("---")
-    st.subheader("Grafik Monitoring Realisasi")
-    provinsi_options = ["Semua"] + sorted(data["provinsi"].dropna().unique().tolist())
-    jenis_belanja_options = ["Semua"] + sorted(data["jenis_belanja_utama"].dropna().unique().tolist())
-    selected_provinsi = st.selectbox("Filter Provinsi", provinsi_options)
-    selected_pagu = st.selectbox("Filter Pagu", pagu_bucket_options())
-    selected_jenis_belanja = st.selectbox("Filter Jenis Belanja", jenis_belanja_options)
-
-    filtered_data = filter_data(data, selected_provinsi, selected_pagu, selected_jenis_belanja)
-    if filtered_data.empty:
-        st.warning("Tidak ada data yang sesuai dengan filter. Silakan ubah pilihan filter.")
-    else:
-        chart_data = filtered_data[
-            ["realisasi_tw1_persen", "realisasi_tw2_persen", "realisasi_tw3_persen"]
-        ].copy()
-        chart_data = chart_data.rename(
-            columns={
-                "realisasi_tw1_persen": "TW1",
-                "realisasi_tw2_persen": "TW2",
-                "realisasi_tw3_persen": "TW3",
-            }
-        )
-        chart_data = chart_data.melt(var_name="Triwulan", value_name="Realisasi (%)")
-        summary = chart_data.groupby("Triwulan", as_index=False)["Realisasi (%)"].mean()
-
-        line_chart = (
-            alt.Chart(summary)
-            .mark_line(point=True, color="#1f77b4", strokeWidth=3)
+            .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5)
             .encode(
-                x=alt.X("Triwulan:N", title="Triwulan"),
-                y=alt.Y("Realisasi (%):Q", title="Rata-rata Realisasi (%)"),
-                tooltip=["Triwulan", alt.Tooltip("Realisasi (%):Q", format=".2f")],
+                x=alt.X("count:Q", title="Jumlah Satker"),
+                y=alt.Y("provinsi:N", sort="-x", title="Provinsi"),
+                color=alt.Color(
+                    "realisasi_tercapai_95persen:N",
+                    title="Realisasi 95%",
+                    scale=alt.Scale(scheme="set2"),
+                ),
+                tooltip=[
+                    alt.Tooltip("provinsi:N", title="Provinsi"),
+                    alt.Tooltip("realisasi_tercapai_95persen:N", title="Realisasi 95%"),
+                    alt.Tooltip("count:Q", title="Jumlah"),
+                ],
             )
-            .properties(height=360)
+            .properties(height=520)
         )
-        st.altair_chart(line_chart, use_container_width=True)
-        st.caption(
-            f"Monitoring realisasi berdasarkan filter: Provinsi={selected_provinsi}, Pagu={selected_pagu}, Jenis Belanja={selected_jenis_belanja}."
-        )
+        st.altair_chart(overview_chart, use_container_width=True)
 
-    st.subheader("Prediksi")
-    if st.button("Hitung Prediksi"):
-        features = build_feature_vector(
-            tipe_satker,
-            jumlah_spm,
-            revisi_dipa,
-            deviasi_rpd_persen,
-            skor_ikpa,
-        )
-        predicted_label, prob_yes, prob_no = predict(model, features)
-
-        st.success(f"Prediksi: **{predicted_label}**")
+    with tab_grafik:
+        st.header("Grafik Batang Monitoring")
         st.write(
-            f"Probabilitas mencapai 95% realisasi: **{prob_yes * 100:.2f}%**"
+            "Pilih provinsi dan jenis belanja untuk melihat hasil filter pada grafik batang."
         )
-        st.write(f"Probabilitas tidak mencapai 95% realisasi: **{prob_no * 100:.2f}%**")
+        provinces = ["Semua"] + sorted(data["provinsi"].dropna().unique())
+        selected_province = st.selectbox("Pilih Provinsi", provinces)
+        jenis_belanja_options = ["Semua"] + sorted(data["jenis_belanja_utama"].dropna().unique())
+        selected_jenis_belanja = st.selectbox(
+            "Pilih Jenis Belanja Utama", jenis_belanja_options
+        )
+        min_pagu = float(data["pagu_miliar"].min())
+        max_pagu = float(data["pagu_miliar"].max())
+        selected_pagu = st.slider(
+            "Rentang Pagu (miliar)",
+            min_value=min_pagu,
+            max_value=max_pagu,
+            value=(min_pagu, max_pagu),
+            step=0.1,
+        )
 
-        st.markdown("### Input yang digunakan")
+        filtered = data.copy()
+        if selected_province != "Semua":
+            filtered = filtered[filtered["provinsi"] == selected_province]
+        if selected_jenis_belanja != "Semua":
+            filtered = filtered[
+                filtered["jenis_belanja_utama"] == selected_jenis_belanja
+            ]
+        filtered = filtered[
+            (filtered["pagu_miliar"] >= selected_pagu[0])
+            & (filtered["pagu_miliar"] <= selected_pagu[1])
+        ]
+
         st.write(
-            {
-                "Tipe Satker": tipe_satker,
-                "Jumlah SPM": jumlah_spm,
-                "Revisi DIPA": revisi_dipa,
-                "Deviasi RPD (%)": deviasi_rpd_persen,
-                "Skor IKPA": skor_ikpa,
-            }
+            f"Menampilkan {len(filtered)} baris data setelah filter: provinsi={selected_province}, pagu={selected_pagu[0]:.2f}-{selected_pagu[1]:.2f}, jenis belanja={selected_jenis_belanja}"
         )
+        if filtered.empty:
+            st.warning("Tidak ada data yang memenuhi filter saat ini.")
+        else:
+            chart_data = (
+                filtered.groupby(["tipe_satker", "realisasi_tercapai_95persen"]).size().reset_index(name="count")
+            )
+            chart = (
+                alt.Chart(chart_data)
+                .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5)
+                .encode(
+                    x=alt.X("count:Q", title="Jumlah Satker"),
+                    y=alt.Y("tipe_satker:N", sort="-x", title="Tipe Satker"),
+                    color=alt.Color(
+                        "realisasi_tercapai_95persen:N",
+                        title="Realisasi 95%",
+                        scale=alt.Scale(scheme="set2"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("tipe_satker:N", title="Tipe Satker"),
+                        alt.Tooltip("realisasi_tercapai_95persen:N", title="Realisasi 95%"),
+                        alt.Tooltip("count:Q", title="Jumlah"),
+                    ],
+                )
+                .properties(height=520)
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+    with tab_prediksi:
+        st.header("Prediksi Model")
+        st.write(
+            "Masukkan nilai input yang diperlukan untuk memprediksi apakah realisasi akan mencapai 95%."
+        )
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            tipe_satker = st.selectbox("Tipe Satker", TIPE_SATKER_OPTIONS)
+            jumlah_spm = st.number_input(
+                "Jumlah SPM",
+                min_value=0.0,
+                max_value=1000.0,
+                value=50.0,
+                step=1.0,
+            )
+            revisi_dipa = st.number_input(
+                "Revisi DIPA",
+                min_value=0.0,
+                max_value=20.0,
+                value=1.0,
+                step=1.0,
+            )
+        with col2:
+            deviasi_rpd_persen = st.number_input(
+                "Deviasi RPD (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=10.0,
+                step=0.1,
+            )
+            skor_ikpa = st.number_input(
+                "Skor IKPA",
+                min_value=0.0,
+                max_value=100.0,
+                value=80.0,
+                step=0.1,
+            )
+            st.write("\n")
+            predict_button = st.button("Hitung Prediksi")
+
+        if predict_button:
+            features = build_feature_vector(
+                tipe_satker,
+                jumlah_spm,
+                revisi_dipa,
+                deviasi_rpd_persen,
+                skor_ikpa,
+            )
+            predicted_label, prob_yes, prob_no = predict(model, features)
+            st.success(f"Prediksi: **{predicted_label}**")
+            st.write(f"Probabilitas mencapai 95% realisasi: **{prob_yes * 100:.2f}%**")
+            st.write(f"Probabilitas tidak mencapai 95% realisasi: **{prob_no * 100:.2f}%**")
+            st.markdown("### Input yang digunakan")
+            st.write(
+                {
+                    "Tipe Satker": tipe_satker,
+                    "Jumlah SPM": jumlah_spm,
+                    "Revisi DIPA": revisi_dipa,
+                    "Deviasi RPD (%)": deviasi_rpd_persen,
+                    "Skor IKPA": skor_ikpa,
+                }
+            )
+        else:
+            st.info("Isi input lalu tekan tombol Hitung Prediksi.")
 
     st.markdown("---")
-    st.caption("Model dimuat dari model/Best_model.pkcls dan dataset contoh dimuat dari data/02_realisasi_anggaran_klasifikasi.csv.")
-
-
-if __name__ == "__main__":
-    main()
+    st.caption(
+        "Model dimuat dari model/Best_model_skl.pkl dan dataset contoh dimuat dari data/02_realisasi_anggaran_klasifikasi.csv."
+    )
