@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import altair as alt
 import joblib
 import numpy as np
 import pandas as pd
@@ -22,9 +23,41 @@ TIPE_SATKER_OPTIONS = [
 ]
 
 
-@st.cache_data
 def load_data() -> pd.DataFrame:
     return pd.read_csv(DATA_PATH)
+
+
+def pagu_bucket_options() -> list[str]:
+    return [
+        "Semua",
+        "< 10 miliar",
+        "10 - 50 miliar",
+        "50 - 100 miliar",
+        "> 100 miliar",
+    ]
+
+
+def filter_data(
+    data: pd.DataFrame,
+    provinsi: str,
+    pagu_bucket: str,
+    jenis_belanja: str,
+) -> pd.DataFrame:
+    filtered = data.copy()
+    if provinsi != "Semua":
+        filtered = filtered[filtered["provinsi"] == provinsi]
+    if jenis_belanja != "Semua":
+        filtered = filtered[filtered["jenis_belanja_utama"] == jenis_belanja]
+    if pagu_bucket != "Semua":
+        if pagu_bucket == "< 10 miliar":
+            filtered = filtered[filtered["pagu_miliar"] < 10]
+        elif pagu_bucket == "10 - 50 miliar":
+            filtered = filtered[(filtered["pagu_miliar"] >= 10) & (filtered["pagu_miliar"] <= 50)]
+        elif pagu_bucket == "50 - 100 miliar":
+            filtered = filtered[(filtered["pagu_miliar"] > 50) & (filtered["pagu_miliar"] <= 100)]
+        else:
+            filtered = filtered[filtered["pagu_miliar"] > 100]
+    return filtered
 
 
 @st.cache_resource
@@ -62,14 +95,6 @@ def main():
         "Gunakan model terbaik untuk memprediksi apakah realisasi akan mencapai 95% dengan input anggaran dan karakteristik satker."
     )
 
-    data = load_data()
-    model = load_model()
-
-    provinsi_options = sorted(data['provinsi'].dropna().unique())
-    jenis_options = sorted(data['jenis_belanja_utama'].dropna().unique())
-    pagu_min = float(data['pagu_miliar'].min())
-    pagu_max = float(data['pagu_miliar'].max())
-
     with st.sidebar:
         st.header("Input Prediksi")
         tipe_satker = st.selectbox("Tipe Satker", TIPE_SATKER_OPTIONS)
@@ -104,30 +129,8 @@ def main():
         st.markdown("---")
         st.caption("Model memanfaatkan fitur numerik dan encoding tipe satker.")
 
-    st.sidebar.header("Filter Monitoring")
-    selected_provinsi = st.sidebar.multiselect(
-        "Provinsi",
-        options=provinsi_options,
-        default=provinsi_options,
-    )
-    selected_jenis = st.sidebar.multiselect(
-        "Jenis Belanja",
-        options=jenis_options,
-        default=jenis_options,
-    )
-    selected_pagu = st.sidebar.slider(
-        "Rentang Pagu (miliar)",
-        min_value=pagu_min,
-        max_value=pagu_max,
-        value=(pagu_min, pagu_max),
-        step=0.1,
-    )
-
-    monitoring_data = data[
-        data['provinsi'].isin(selected_provinsi)
-        & data['jenis_belanja_utama'].isin(selected_jenis)
-        & data['pagu_miliar'].between(selected_pagu[0], selected_pagu[1])
-    ]
+    data = load_data()
+    model = load_model()
 
     with st.expander("Ringkasan Data", expanded=True):
         st.write("Dataset contoh prediksi dan statistik dasar dari data yang tersedia.")
@@ -141,55 +144,49 @@ def main():
             )
         with col2:
             st.bar_chart(
-                data['realisasi_tercapai_95persen']
-                .value_counts()
-                .rename_axis('Label')
-                .reset_index(name='Count'),
+                data['realisasi_tercapai_95persen'].value_counts().rename_axis('Label').reset_index(name='Count'),
                 x='Label',
                 y='Count',
             )
 
-    st.subheader("Monitoring Grafik")
-    if monitoring_data.empty:
-        st.warning("Tidak ada data yang cocok dengan filter saat ini.")
+    st.markdown("---")
+    st.subheader("Grafik Monitoring Realisasi")
+    provinsi_options = ["Semua"] + sorted(data["provinsi"].dropna().unique().tolist())
+    jenis_belanja_options = ["Semua"] + sorted(data["jenis_belanja_utama"].dropna().unique().tolist())
+    selected_provinsi = st.selectbox("Filter Provinsi", provinsi_options)
+    selected_pagu = st.selectbox("Filter Pagu", pagu_bucket_options())
+    selected_jenis_belanja = st.selectbox("Filter Jenis Belanja", jenis_belanja_options)
+
+    filtered_data = filter_data(data, selected_provinsi, selected_pagu, selected_jenis_belanja)
+    if filtered_data.empty:
+        st.warning("Tidak ada data yang sesuai dengan filter. Silakan ubah pilihan filter.")
     else:
-        st.markdown(
-            "Filter monitoring digunakan untuk melihat kinerja sasaran realisasi berdasarkan provinsi, pagu, dan jenis belanja."
+        chart_data = filtered_data[
+            ["realisasi_tw1_persen", "realisasi_tw2_persen", "realisasi_tw3_persen"]
+        ].copy()
+        chart_data = chart_data.rename(
+            columns={
+                "realisasi_tw1_persen": "TW1",
+                "realisasi_tw2_persen": "TW2",
+                "realisasi_tw3_persen": "TW3",
+            }
         )
-        mcol1, mcol2, mcol3 = st.columns(3)
-        mcol1.metric("Baris yang Dipilih", len(monitoring_data))
-        mcol2.metric(
-            "Rata-rata Pagu",
-            f"{monitoring_data['pagu_miliar'].mean():.2f} M",
-        )
-        mcol3.metric(
-            "Rata-rata Skor IKPA",
-            f"{monitoring_data['skor_ikpa'].mean():.2f}",
-        )
+        chart_data = chart_data.melt(var_name="Triwulan", value_name="Realisasi (%)")
+        summary = chart_data.groupby("Triwulan", as_index=False)["Realisasi (%)"].mean()
 
-        st.markdown("**Distribusi Realisasi 95%**")
-        st.bar_chart(
-            monitoring_data['realisasi_tercapai_95persen']
-            .value_counts()
-            .rename_axis('Label')
-            .reset_index(name='Count')
-            .set_index('Label')
+        line_chart = (
+            alt.Chart(summary)
+            .mark_line(point=True, color="#1f77b4", strokeWidth=3)
+            .encode(
+                x=alt.X("Triwulan:N", title="Triwulan"),
+                y=alt.Y("Realisasi (%):Q", title="Rata-rata Realisasi (%)"),
+                tooltip=["Triwulan", alt.Tooltip("Realisasi (%):Q", format=".2f")],
+            )
+            .properties(height=360)
         )
-
-        st.markdown("**Jumlah Satker per Provinsi**")
-        st.bar_chart(
-            monitoring_data['provinsi']
-            .value_counts()
-            .rename_axis('Provinsi')
-            .reset_index(name='Count')
-            .set_index('Provinsi')
-        )
-
-        st.markdown("**Rata-rata Skor IKPA per Jenis Belanja**")
-        st.bar_chart(
-            monitoring_data.groupby('jenis_belanja_utama')['skor_ikpa']
-            .mean()
-            .sort_values(ascending=False)
+        st.altair_chart(line_chart, use_container_width=True)
+        st.caption(
+            f"Monitoring realisasi berdasarkan filter: Provinsi={selected_provinsi}, Pagu={selected_pagu}, Jenis Belanja={selected_jenis_belanja}."
         )
 
     st.subheader("Prediksi")
@@ -221,9 +218,7 @@ def main():
         )
 
     st.markdown("---")
-    st.caption(
-        "Model dimuat dari model/Best_model_skl.pkl dan dataset contoh dimuat dari data/02_realisasi_anggaran_klasifikasi.csv."
-    )
+    st.caption("Model dimuat dari model/Best_model.pkcls dan dataset contoh dimuat dari data/02_realisasi_anggaran_klasifikasi.csv.")
 
 
 if __name__ == "__main__":
