@@ -8,7 +8,7 @@ import streamlit as st
 
 st.set_page_config(
     page_title="Dashboard Prediksi Realisasi Pelaksanaan Anggaran",
-    page_icon="assets/bppk-kemenkeu-icon.png",
+    page_icon="assets/bppk.png",
     layout="wide",
 )
 
