@@ -1,9 +1,8 @@
-import warnings
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
-import pickle
 import streamlit as st
 
 st.set_page_config(
@@ -12,19 +11,8 @@ st.set_page_config(
     layout="wide",
 )
 
-MODEL_PATH = Path("model/Best_model.pkcls")
+MODEL_PATH = Path("model/Best_model_skl.pkl")
 DATA_PATH = Path("data/02_realisasi_anggaran_klasifikasi.csv")
-
-FEATURE_ORDER = [
-    "jumlah_spm",
-    "revisi_dipa",
-    "deviasi_rpd_persen",
-    "skor_ikpa",
-    "tipe_satker=Dekonsentrasi",
-    "tipe_satker=Kantor Daerah",
-    "tipe_satker=Kantor Pusat",
-    "tipe_satker=Tugas Pembantuan",
-]
 
 TIPE_SATKER_OPTIONS = [
     "Dekonsentrasi",
@@ -40,10 +28,7 @@ def load_data() -> pd.DataFrame:
 
 @st.cache_resource
 def load_model():
-    warnings.filterwarnings("ignore", category=UserWarning)
-    with open(MODEL_PATH, "rb") as model_file:
-        model = pickle.load(model_file)
-    return model
+    return joblib.load(MODEL_PATH)
 
 
 def build_feature_vector(
@@ -62,8 +47,8 @@ def build_feature_vector(
 
 def predict(model, features: np.ndarray) -> tuple[str, float, float]:
     features = features.reshape(1, -1)
-    proba = model.skl_model.predict_proba(features)[0]
-    pred = model.skl_model.predict(features)[0]
+    proba = model.predict_proba(features)[0]
+    pred = model.predict(features)[0]
     label = "Ya" if float(pred) == 1.0 else "Tidak"
     probability_yes = float(proba[1])
     probability_no = float(proba[0])
