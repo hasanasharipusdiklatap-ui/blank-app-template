@@ -7,8 +7,8 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Dashboard Prediksi Realisasi 95%",
-    page_icon="📊",
+    page_title="Dashboard Prediksi Realisasi Pelaksanaan Anggaran",
+    page_icon="assets/bppk-kemenkeu-icon.png",
     layout="wide",
 )
 
