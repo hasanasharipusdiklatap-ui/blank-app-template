@@ -248,3 +248,7 @@ def main():
     st.caption(
         "Model dimuat dari model/Best_model_skl.pkl dan dataset contoh dimuat dari data/02_realisasi_anggaran_klasifikasi.csv."
     )
+
+
+if __name__ == "__main__":
+    main()
